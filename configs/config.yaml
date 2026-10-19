@@ -1,0 +1,23 @@
+project:
+  name: fleetmind_dispatch_risk
+  random_state: 42
+data:
+  target: Late_delivery_risk
+  group_column: Order Id
+  test_size: 0.20
+  raw_path: data/raw/DataCoSupplyChainDataset.csv
+  forbidden_predictors:
+    - Late_delivery_risk
+    - Days for shipping (real)
+    - Delivery Status
+    - Order Status
+    - shipping date (DateOrders)
+training:
+  primary_metric: f1
+  # Final input features and hyperparameters will be selected after EDA.
+mlflow:
+  experiment_name: fleetmind_dispatch_risk
+llm:
+  provider: nebius
+  model: ''
+  temperature: 0.1

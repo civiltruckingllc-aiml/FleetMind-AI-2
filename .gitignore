@@ -1,0 +1,33 @@
+.venv/
+.env
+__pycache__/
+.pytest_cache/
+*.pyc
+data/raw/*
+!data/raw/.gitkeep
+data/processed/
+models/*
+!models/.gitkeep
+mlruns/
+mlartifacts/
+*.pkl
+*.joblib
+
+# Local MLflow tracking database
+mlflow.db
+*.db-journal
+
+# Local configuration and secrets
+.env.*
+!.env.example
+
+# Editor and operating system files
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.log
+
+# Temporary API connection test
+test_nebius.py
