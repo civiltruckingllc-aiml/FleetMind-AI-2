@@ -1,7 +1,8 @@
-﻿
+
 """FleetMind AI: group-aware training and MLflow tracking."""
 
 import argparse
+import uuid
 import json
 from pathlib import Path
 
@@ -9,7 +10,7 @@ import joblib
 import mlflow
 import numpy as np
 import pandas as pd
-
+import yaml
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import (
     HistGradientBoostingClassifier,
@@ -32,6 +33,13 @@ from preprocess import APPROVED_FEATURES, select_model_features
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+CONFIG_PATH = PROJECT_ROOT / "configs" / "config.yaml"
+
+
+def load_config():
+    """Load training settings from the YAML configuration."""
+    with open(CONFIG_PATH, "r", encoding="utf-8-sig") as file:
+        return yaml.safe_load(file)
 DEFAULT_CSV = PROJECT_ROOT / "data" / "raw" / "DataCoSupplyChainDataset.csv"
 MODEL_DIR = PROJECT_ROOT / "models"
 TARGET = "Late_delivery_risk"
@@ -71,7 +79,33 @@ def build_pipeline(model):
         ("model", model),
     ])
 
+def build_model_from_config(settings, random_state):
+    """Create a machine learning model using YAML settings."""
+    settings = settings.copy()
+    algorithm = settings.pop("algorithm")
 
+    if algorithm == "logistic_regression":
+        return LogisticRegression(
+            **settings,
+            random_state=random_state
+        )
+
+    elif algorithm == "random_forest":
+        return RandomForestClassifier(
+            **settings,
+            random_state=random_state
+        )
+
+    elif algorithm == "hist_gradient_boosting":
+        return HistGradientBoostingClassifier(
+            **settings,
+            random_state=random_state
+        )
+
+    else:
+        raise ValueError(
+            f"Unsupported model algorithm: {algorithm}"
+        )
 def calculate_metrics(model, X, y):
     predictions = model.predict(X)
     probabilities = model.predict_proba(X)[:, 1]
@@ -86,6 +120,11 @@ def calculate_metrics(model, X, y):
 
 
 def train(csv_path):
+    config = load_config()
+    random_state = config["project"]["random_state"]
+    model_configs = config["training"]["models"]
+
+    print(f"Loaded {len(model_configs)} model configurations from YAML.")
     print("\nLoading FleetMind AI dataset...")
     df = pd.read_csv(csv_path, encoding="latin-1", low_memory=False)
 
@@ -101,7 +140,9 @@ def train(csv_path):
 
     # Hold out 20% of orders for final testing.
     outer_split = GroupShuffleSplit(
-        n_splits=1, test_size=0.20, random_state=42
+        n_splits=1,
+        test_size=config["data"]["test_size"],
+        random_state=random_state,
     )
     train_val_idx, test_idx = next(
         outer_split.split(X, y, groups)
@@ -116,7 +157,9 @@ def train(csv_path):
 
     # Split remaining orders into training and validation.
     inner_split = GroupShuffleSplit(
-        n_splits=1, test_size=0.20, random_state=43
+        n_splits=1,
+        test_size=config["data"]["validation_size"],
+        random_state=random_state + 1,
     )
     train_idx, val_idx = next(
         inner_split.split(X_train_val, y_train_val, groups_train_val)
@@ -132,32 +175,18 @@ def train(csv_path):
     print(f"Testing records: {len(X_test):,}")
 
     experiments = {
-        "logistic_C_0.1": LogisticRegression(
-            C=0.1, max_iter=1000, random_state=42
-        ),
-        "logistic_C_1.0": LogisticRegression(
-            C=1.0, max_iter=1000, random_state=42
-        ),
-        "random_forest_100": RandomForestClassifier(
-            n_estimators=100, max_depth=12,
-            random_state=42, n_jobs=-1
-        ),
-        "random_forest_200": RandomForestClassifier(
-            n_estimators=200, max_depth=18,
-            random_state=42, n_jobs=-1
-        ),
-        "hist_gradient_boosting": HistGradientBoostingClassifier(
-            max_iter=150, max_depth=8, random_state=42
-        ),
+        name: build_model_from_config(settings, random_state)
+        for name, settings in model_configs.items()
     }
 
 
     mlflow.set_tracking_uri(
         f"sqlite:///{(PROJECT_ROOT / 'mlflow.db').as_posix()}"
     )
-    mlflow.set_experiment("FleetMind_Dispatch_Risk")
+    mlflow.set_experiment(config["mlflow"]["experiment_name"])
 
 
+    training_session_id = uuid.uuid4().hex
     best_name = None
     best_score = -1.0
     best_model = None
@@ -169,9 +198,19 @@ def train(csv_path):
         pipeline = build_pipeline(estimator)
 
         with mlflow.start_run(run_name=name):
+            mlflow.set_tag("training_session_id", training_session_id)
             mlflow.log_param("model_name", name)
-            mlflow.log_param("random_state", 42)
+            mlflow.log_param("random_state", random_state)
             mlflow.log_param("feature_count", len(APPROVED_FEATURES))
+            mlflow.log_param("dataset_name", "DataCo Smart Supply Chain")
+            mlflow.log_param("target_column", TARGET)
+            mlflow.log_param("group_column", GROUP_COLUMN)
+            mlflow.log_param("split_strategy", "GroupShuffleSplit_by_Order_Id")
+            mlflow.log_param("training_rows", len(X_train))
+            mlflow.log_param("validation_rows", len(X_val))
+            mlflow.log_param("testing_rows", len(X_test))
+            mlflow.log_param("test_split", config["data"]["test_size"])
+            mlflow.log_param("validation_split", config["data"]["validation_size"])
 
             for parameter, value in estimator.get_params().items():
                 if isinstance(value, (str, int, float, bool)) or value is None:
@@ -184,6 +223,11 @@ def train(csv_path):
                 f"val_{key}": float(value)
                 for key, value in metrics.items()
             })
+
+            MODEL_DIR.mkdir(parents=True, exist_ok=True)
+            model_artifact = MODEL_DIR / f"{name}.joblib"
+            joblib.dump(pipeline, model_artifact)
+            mlflow.log_artifact(str(model_artifact), artifact_path="trained_model")
 
             result = {"model": name, **metrics}
             results.append(result)
@@ -200,11 +244,25 @@ def train(csv_path):
 
     # Use MLflow's experiment records to verify the selected run.
     runs = mlflow.search_runs(
-        experiment_names=["FleetMind_Dispatch_Risk"],
+        experiment_names=[config["mlflow"]["experiment_name"]],
         order_by=["metrics.val_f1 DESC"],
     )
     print("\nTop tracked MLflow runs:")
     print(runs[["tags.mlflow.runName", "metrics.val_f1"]].head())
+
+    # Select the best configuration from this training session.
+    current_runs = runs[
+        runs["tags.training_session_id"] == training_session_id
+    ]
+
+    mlflow_best_name = current_runs.iloc[0]["tags.mlflow.runName"]
+    mlflow_best_score = float(current_runs.iloc[0]["metrics.val_f1"])
+
+    if mlflow_best_name != best_name:
+        raise RuntimeError("MLflow ranking disagrees with training selection.")
+
+    best_name = mlflow_best_name
+    best_score = mlflow_best_score
 
     print(f"\nBest model: {best_name}")
     print(f"Validation F1: {best_score:.4f}")

@@ -31,3 +31,5 @@ Thumbs.db
 
 # Temporary API connection test
 test_nebius.py
+
+src/train_backup.py

@@ -128,42 +128,50 @@ Streamlit interface
 
 ### 1. Create a virtual environment
 
-Windows PowerShell:
+Run: `py -3.12 -m venv .venv` and `.\.venv\Scripts\Activate.ps1`.
 
-```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
+### 2. Install dependencies
 
-Idris Roberts
+Run: `python -m pip install -r requirements.txt`
 
-TripleTen AI and Machine Learning Engineering Capstone
+### 3. Configure Nebius
 
-## Reproducing the Trained Model
+Create a private `.env` file containing `NEBIUS_API_KEY=your_api_key_here`. Never commit this file.
 
-The original DataCo dataset is not included in this repository.
+### 4. Prepare the dataset
 
-1. Download the DataCo Smart Supply Chain dataset from Mendeley Data.
-2. Save the CSV as data/raw/DataCoSupplyChainDataset.csv.
-3. Install the Python dependencies.
-4. Run the training script from the project root.
+Download DataCo Smart Supply Chain from Mendeley Data and save the CSV as `data/raw/DataCoSupplyChainDataset.csv`.
 
-Training command:
+### 5. Train the model
 
-    python src/train.py
+Run: `python src/train.py --csv data/raw/DataCoSupplyChainDataset.csv`
 
-The training process evaluates five model configurations using group-aware data splitting and MLflow experiment tracking.
+### 6. Launch the application
 
-The training script generates:
+Run: `python -m streamlit run src/app.py`
 
-- models/best_model.joblib
-- models/model_metadata.json
+### 7. View MLflow experiments
 
-Both files are required to run the prediction application.
+Run: `python -m mlflow ui --backend-store-uri sqlite:///mlflow.db`
 
-Start the Streamlit application:
+### 8. Run tests
 
-    python -m streamlit run src/app.py
+Run: `python -m pytest tests/ -v`
 
-Run automated tests:
+## Experiment Comparison
 
-    python -m pytest tests/ -v
+| Model | Validation F1 |
+|---|---:|
+| Logistic Regression C=0.1 | 0.6611 |
+| Logistic Regression C=1.0 | 0.6618 |
+| Random Forest 100 | 0.6699 |
+| Random Forest 200 | 0.6650 |
+| Histogram Gradient Boosting | 0.6650 |
+
+## Limitations and Reflection
+
+The model estimates dispatch risk rather than arrival delays. Order-grouped splitting and leakage-safe features reduce evaluation leakage. Future improvements include chronological evaluation, probability calibration, and drift monitoring. The LLM interprets and explains requests; scikit-learn calculates predictions.
+
+## Author
+
+Idris Roberts — TripleTen AI and Machine Learning Engineering Capstone
